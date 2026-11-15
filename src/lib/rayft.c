@@ -1,5 +1,6 @@
 #include "rayft.h"
 #include <stdlib.h>
+#include <limits.h>
 
 #define ATLAS_SIZE 1024
 
@@ -23,9 +24,9 @@ Color* RftBitmapToRGBA(FT_Bitmap* bitmap) {
         const unsigned char* p = row + x * 4;
         unsigned int a = p[3];
         pixels[y*w+x] = (Color){
-          a ? (unsigned char)((p[2] * 255U + a/2) / a) : 0,
-          a ? (unsigned char)((p[1] * 255U + a/2) / a) : 0,
-          a ? (unsigned char)((p[0] * 255U + a/2) / a) : 0,
+          a ? (unsigned char)(((unsigned int)p[2] * 255U + a/2) / a) : 0,
+          a ? (unsigned char)(((unsigned int)p[1] * 255U + a/2) / a) : 0,
+          a ? (unsigned char)(((unsigned int)p[0] * 255U + a/2) / a) : 0,
           (unsigned char)a
         };
       } else {
@@ -81,12 +82,28 @@ RftFont RftLoadFont(char* path, int size) {
 
 bool RftSetFallbackFont(RftFont* font, char* path) {
   FT_Face face;
-  if (FT_New_Face(ft, path, 0, &face)) return false;
+  if (!font || !font->face || FT_New_Face(ft, path, 0, &face)) return false;
   FT_Select_Charmap(face, FT_ENCODING_UNICODE);
-  if (FT_Set_Pixel_Sizes(face, 0, font->face->size->metrics.y_ppem)) {
-    FT_Done_Face(face);
-    return false;
+
+  // Color emoji fonts such as Noto Color Emoji are bitmap-only and provide
+  // fixed strikes. Select the nearest strike; drawing scales it to text size.
+  if (FT_IS_SCALABLE(face)) {
+    if (FT_Set_Pixel_Sizes(face, 0, font->face->size->metrics.y_ppem)) {
+      FT_Done_Face(face);
+      return false;
+    }
+  } else {
+    if (!face->num_fixed_sizes) { FT_Done_Face(face); return false; }
+    int target = font->face->size->metrics.y_ppem * 64;
+    int best = 0;
+    long best_diff = LONG_MAX;
+    for (int i = 0; i < face->num_fixed_sizes; i++) {
+      long diff = labs((long)face->available_sizes[i].y_ppem - target);
+      if (diff < best_diff) { best = i; best_diff = diff; }
+    }
+    if (FT_Select_Size(face, best)) { FT_Done_Face(face); return false; }
   }
+
   if (font->fallback_face) FT_Done_Face(font->fallback_face);
   font->fallback_face = face;
   return true;
@@ -154,11 +171,16 @@ static Vector2 draw_glyph(RftFont* font, int index, FT_Face face, Vector2 positi
   RftCachedGlyph* glyph = find_glyph(font, index, face);
   if (!glyph) glyph = load_glyph(font, index, face);
   if (!glyph) return position;
-  float baseline = position.y + face->size->metrics.ascender / 64.0f;
+
+  float scale = face == font->fallback_face
+    ? (float)font->face->size->metrics.y_ppem / face->size->metrics.y_ppem : 1.0f;
+  float baseline = position.y + font->face->size->metrics.ascender / 64.0f;
   Rectangle source = { glyph->atlas_position.x, glyph->atlas_position.y, glyph->width, glyph->height };
-  Rectangle target = { position.x + glyph->x_offset, baseline - glyph->y_offset, glyph->width, glyph->height };
-  DrawTexturePro(font->atlases[glyph->atlas_index].texture, source, target, (Vector2){ 0, 0 }, 0, glyph->is_color ? WHITE : color);
-  return (Vector2){ position.x + glyph->x_advance, position.y };
+  Rectangle target = { position.x + glyph->x_offset * scale, baseline - glyph->y_offset * scale,
+                       glyph->width * scale, glyph->height * scale };
+  DrawTexturePro(font->atlases[glyph->atlas_index].texture, source, target, (Vector2){ 0, 0 }, 0,
+                 glyph->is_color ? WHITE : color);
+  return (Vector2){ position.x + glyph->x_advance * scale, position.y };
 }
 
 Vector2 RftDrawGlyph(RftFont* font, int index, Vector2 position, Color color) {

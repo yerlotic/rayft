@@ -9,8 +9,10 @@ int main(void) {
 
   RftInit();
   RftFont font = RftLoadFont("assets/DMMono-Regular.ttf", FONT_SIZE);
-  RftSetFallbackFont(&font, "/usr/share/fonts/noto/NotoColorEmoji.ttf");
-  const char* text = "Hello, world! 😀";
+  if (!RftSetFallbackFont(&font, "/usr/share/fonts/noto/NotoColorEmoji.ttf")) {
+    TraceLog(LOG_WARNING, "Could not load Noto Color Emoji. Set the fallback font path in src/main.c.");
+  }
+  const char *text = "Hello, world!🧑‍💻 🏳️‍🌈 👨‍👩‍👧‍👦  😀";
 
   while (!WindowShouldClose()) {
     BeginDrawing();
