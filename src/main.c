@@ -6,12 +6,13 @@
 int main() {
   InitWindow(600, 400, "RayFT");
   SetTargetFPS(60);
-  const char *text = "Hello, world!";
+  const char *text = "Hello, world!🧑‍💻 🏳️‍🌈 👨‍👩‍👧‍👦  😀";
 
   // Initialize library and font
   RftInit();
-  RftFont font = RftLoadFont("assets/DMMono-Regular.ttf", FONT_SIZE);
-  
+  // RftFont font = RftLoadFont("assets/DMMono-Regular.ttf", FONT_SIZE);
+  RftFont font = RftLoadFont("/usr/share/fonts/noto/NotoColorEmoji.ttf", FONT_SIZE);
+
   while (!WindowShouldClose()) {
     BeginDrawing();
 
