@@ -27,6 +27,7 @@ struct RftCachedGlyph {
   int x_offset;
   int y_offset;
   float x_advance;
+  bool is_color;
   RftCachedGlyph* next;
 };
 
@@ -39,8 +40,7 @@ struct RftFont {
 
 // Initializes the RayFT library. Call this function before loading/drawing any font.
 void RftInit(void);
-// Coverts a FreeType bitmap into an array of colors to be
-// printed on a texture.
+// Converts a FreeType bitmap into RGBA pixels for the atlas texture.
 Color* RftBitmapToRGBA(FT_Bitmap* bitmap);
 // Create an empty atlas
 RftAtlas RftCreateAtlas(void);

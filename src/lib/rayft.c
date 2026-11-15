@@ -9,18 +9,44 @@ void RftInit(void) {
   FT_Init_FreeType(&ft);
 }
 
-// Coverts a FreeType bitmap into an array of colors to be
-// printed on a texture.
+// Converts a FreeType bitmap into RGBA pixels for the atlas texture. FreeType's
+// BGRA color bitmaps use premultiplied alpha, while Raylib expects straight RGBA.
 Color* RftBitmapToRGBA(FT_Bitmap* bitmap) {
   int w = bitmap->width;
   int h = bitmap->rows;
-  Color* pixels = (Color*) malloc(w * h * sizeof(Color));
-  int row_offset = 0;
+  Color* pixels = (Color*) malloc((size_t)w * h * sizeof(Color));
+  int pitch = bitmap->pitch;
+  int row_stride = pitch >= 0 ? pitch : -pitch;
+
   for (int y = 0; y < h; y++) {
+    int source_y = pitch >= 0 ? y : h - 1 - y;
+    const unsigned char* row = bitmap->buffer + source_y * row_stride;
     for (int x = 0; x < w; x++) {
-      pixels[y * w + x] = (Color){ .r = 255, .g = 255, .b = 255, .a = bitmap->buffer[row_offset + x]};
+      Color color;
+      if (bitmap->pixel_mode == FT_PIXEL_MODE_BGRA) {
+        const unsigned char* bgra = row + x * 4;
+        unsigned int alpha = bgra[3];
+        // Un-premultiply the channels for standard alpha blending.
+        color = (Color){
+          .r = alpha ? (unsigned char)((bgra[2] * 255U + alpha / 2U) / alpha) : 0,
+          .g = alpha ? (unsigned char)((bgra[1] * 255U + alpha / 2U) / alpha) : 0,
+          .b = alpha ? (unsigned char)((bgra[0] * 255U + alpha / 2U) / alpha) : 0,
+          .a = (unsigned char)alpha
+        };
+      } else {
+        unsigned char alpha = 0;
+        if (bitmap->pixel_mode == FT_PIXEL_MODE_MONO) {
+          alpha = (row[x >> 3] & (0x80 >> (x & 7))) ? 255 : 0;
+        } else {
+          alpha = row[x];
+          if (bitmap->pixel_mode == FT_PIXEL_MODE_GRAY && bitmap->num_grays > 1 && bitmap->num_grays != 256) {
+            alpha = (unsigned char)((unsigned int)alpha * 255U / (bitmap->num_grays - 1));
+          }
+        }
+        color = (Color){ .r = 255, .g = 255, .b = 255, .a = alpha };
+      }
+      pixels[y * w + x] = color;
     }
-    row_offset += bitmap->pitch;
   }
   return pixels;
 }
@@ -98,7 +124,7 @@ Vector2 RftAddToAtlas(RftAtlas* atlas, Color* pixels, Vector2 dim) {
 RftFont RftLoadFont(char* path, int size) {
   RftFont font;
   FT_Face face;
-  FT_New_Face(ft, "assets/DMMono-Regular.ttf", 0, &face);
+  FT_New_Face(ft, path, 0, &face);
   FT_Select_Charmap(face, FT_ENCODING_UNICODE);
   FT_Set_Pixel_Sizes(face, 0, size);
   font.face = face;
@@ -159,7 +185,7 @@ RftCachedGlyph* RftFindGlyph(RftFont font, int index) {
 
 // Loads and caches the glyph at the given index, returning a pointer to it.
 RftCachedGlyph* RftLoadGlyph(RftFont* font, int index) {
-  FT_Load_Glyph(font->face, index, FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT);
+  FT_Load_Glyph(font->face, index, FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT | FT_LOAD_COLOR);
   FT_GlyphSlot glyph = font->face->glyph;
   FT_Bitmap* bitmap = &glyph->bitmap;
   int width = bitmap->width;
@@ -181,6 +207,7 @@ RftCachedGlyph* RftLoadGlyph(RftFont* font, int index) {
     atlas_index = font->used_atlases - 1;
   }
   atlas_position = RftAddToAtlas(&font->atlases[atlas_index], pixels, dim);
+  free(pixels);
   // Create glyph
   RftCachedGlyph* cached = (RftCachedGlyph*) malloc(sizeof(RftCachedGlyph));
   cached->atlas_index = atlas_index;
@@ -191,6 +218,7 @@ RftCachedGlyph* RftLoadGlyph(RftFont* font, int index) {
   cached->y_offset = y_offset;
   cached->width = width;
   cached->height = height;
+  cached->is_color = bitmap->pixel_mode == FT_PIXEL_MODE_BGRA;
   // Insert into cache
   int hash = RftHash(index) % CACHE_SIZE;
   cached->next = font->cache[hash];
@@ -208,7 +236,7 @@ Vector2 RftDrawGlyph(RftFont* font, int index, Vector2 position, Color color) {
   RftAtlas atlas = font->atlases[glyph->atlas_index];
   Rectangle source = (Rectangle){ glyph->atlas_position.x, glyph->atlas_position.y, glyph->width, glyph->height };
   Rectangle target = (Rectangle){ draw_x, draw_y, glyph->width, glyph->height };
-  DrawTexturePro(atlas.texture, source, target, (Vector2){ 0, 0 }, 0.0f, color);
+  DrawTexturePro(atlas.texture, source, target, (Vector2){ 0, 0 }, 0.0f, glyph->is_color ? WHITE : color);
   return (Vector2){ position.x + glyph->x_advance, position.y };
 }
 
