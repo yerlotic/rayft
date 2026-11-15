@@ -1,4 +1,5 @@
 #include "rayft.h"
+#include <stdlib.h>
 
 #define ATLAS_SIZE 1024
 
@@ -8,16 +9,25 @@ void RftInit(void) {
   FT_Init_FreeType(&ft);
 }
 
+// Convert FreeType grayscale or BGRA bitmap data to Raylib RGBA pixels.
 Color* RftBitmapToRGBA(FT_Bitmap* bitmap) {
   int w = bitmap->width, h = bitmap->rows;
-  Color* pixels = malloc((size_t)w * h * sizeof(Color));
+  Color* pixels = malloc((size_t)w * h * sizeof(*pixels));
+  if (!pixels) return NULL;
+
   int stride = abs(bitmap->pitch);
   for (int y = 0; y < h; y++) {
     const unsigned char* row = bitmap->buffer + (bitmap->pitch >= 0 ? y : h - 1 - y) * stride;
     for (int x = 0; x < w; x++) {
       if (bitmap->pixel_mode == FT_PIXEL_MODE_BGRA) {
         const unsigned char* p = row + x * 4;
-        pixels[y*w+x] = (Color){ p[2], p[1], p[0], p[3] };
+        unsigned int a = p[3];
+        pixels[y*w+x] = (Color){
+          a ? (unsigned char)((p[2] * 255U + a/2) / a) : 0,
+          a ? (unsigned char)((p[1] * 255U + a/2) / a) : 0,
+          a ? (unsigned char)((p[0] * 255U + a/2) / a) : 0,
+          (unsigned char)a
+        };
       } else {
         unsigned char a = bitmap->pixel_mode == FT_PIXEL_MODE_MONO
           ? ((row[x >> 3] & (0x80 >> (x & 7))) ? 255 : 0) : row[x];
@@ -61,7 +71,7 @@ Vector2 RftAddToAtlas(RftAtlas* atlas, Color* pixels, Vector2 dim) {
 
 RftFont RftLoadFont(char* path, int size) {
   RftFont font = { 0 };
-  FT_New_Face(ft, path, 0, &font.face);
+  if (FT_New_Face(ft, path, 0, &font.face)) return font;
   FT_Select_Charmap(font.face, FT_ENCODING_UNICODE);
   FT_Set_Pixel_Sizes(font.face, 0, size);
   font.atlases[0] = RftCreateAtlas();
@@ -70,9 +80,16 @@ RftFont RftLoadFont(char* path, int size) {
 }
 
 bool RftSetFallbackFont(RftFont* font, char* path) {
-  if (FT_New_Face(ft, path, 0, &font->fallback_face)) return false;
-  FT_Select_Charmap(font->fallback_face, FT_ENCODING_UNICODE);
-  return FT_Set_Pixel_Sizes(font->fallback_face, 0, font->face->size->metrics.y_ppem) == 0;
+  FT_Face face;
+  if (FT_New_Face(ft, path, 0, &face)) return false;
+  FT_Select_Charmap(face, FT_ENCODING_UNICODE);
+  if (FT_Set_Pixel_Sizes(face, 0, font->face->size->metrics.y_ppem)) {
+    FT_Done_Face(face);
+    return false;
+  }
+  if (font->fallback_face) FT_Done_Face(font->fallback_face);
+  font->fallback_face = face;
+  return true;
 }
 
 void RftUnloadFont(RftFont font) {
@@ -82,7 +99,7 @@ void RftUnloadFont(RftFont font) {
   }
   for (int i = 0; i < font.used_atlases; i++) RftDestroyAtlas(font.atlases[i]);
   if (font.fallback_face) FT_Done_Face(font.fallback_face);
-  FT_Done_Face(font.face);
+  if (font.face) FT_Done_Face(font.face);
 }
 
 int RftHash(int x) {
@@ -101,7 +118,10 @@ static RftCachedGlyph* load_glyph(RftFont* font, int index, FT_Face face) {
   FT_GlyphSlot slot = face->glyph;
   FT_Bitmap* bitmap = &slot->bitmap;
   int width = bitmap->width, height = bitmap->rows;
+  if (!width || !height) return NULL;
   Color* pixels = RftBitmapToRGBA(bitmap);
+  if (!pixels) return NULL;
+
   int atlas_index = font->used_atlases - 1;
   if (!RftAtlasHasSpace(font->atlases[atlas_index], (Vector2){ width, height })) {
     if (atlas_index + 1 >= ATLAS_COUNT) { free(pixels); return NULL; }
@@ -111,6 +131,7 @@ static RftCachedGlyph* load_glyph(RftFont* font, int index, FT_Face face) {
   Vector2 atlas_position = RftAddToAtlas(&font->atlases[atlas_index], pixels, (Vector2){ width, height });
   free(pixels);
   RftCachedGlyph* cached = malloc(sizeof(*cached));
+  if (!cached) return NULL;
   *cached = (RftCachedGlyph){ .index = index, .face = face, .atlas_index = atlas_index,
     .atlas_position = atlas_position, .width = width, .height = height,
     .x_offset = slot->bitmap_left, .y_offset = slot->bitmap_top,
