@@ -185,7 +185,9 @@ RftCachedGlyph* RftFindGlyph(RftFont font, int index) {
 
 // Loads and caches the glyph at the given index, returning a pointer to it.
 RftCachedGlyph* RftLoadGlyph(RftFont* font, int index) {
-  FT_Load_Glyph(font->face, index, FT_LOAD_RENDER | FT_LOAD_FORCE_AUTOHINT | FT_LOAD_COLOR);
+  // Color emoji fonts such as Noto Color Emoji use bitmap strikes; force-autohinting
+  // can make FreeType fail to load those glyphs.
+  FT_Load_Glyph(font->face, index, FT_LOAD_RENDER | FT_LOAD_COLOR);
   FT_GlyphSlot glyph = font->face->glyph;
   FT_Bitmap* bitmap = &glyph->bitmap;
   int width = bitmap->width;
